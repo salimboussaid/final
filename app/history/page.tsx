@@ -2,129 +2,136 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { userApi, groupApi, ApiError, clearAuthCredentials } from '@/lib/api'
+import { CoinsHistoryRecord, GroupDTO } from '@/lib/types'
 
-// Types
 interface HistoryRecord {
   id: number
-  studentName: string
-  teacherName: string
-  group: string
   date: string
-  algocoins: number
+  teacher: string
+  group: string
+  student: string
+  coins: number
+  reason: string
 }
-
-// Mock data
-const mockHistory: HistoryRecord[] = [
-  {
-    id: 1,
-    studentName: 'Коссе Иван Николаевич',
-    teacherName: 'буссаид мохаммед салим',
-    group: 'Вечерния суббота',
-    date: '10.10.2010',
-    algocoins: 5,
-  },
-  {
-    id: 2,
-    studentName: 'Коссе Иван Николаевич',
-    teacherName: 'буссаид мохаммед салим',
-    group: 'Вечерния суббота',
-    date: '10.10.2010',
-    algocoins: 5,
-  },
-  {
-    id: 3,
-    studentName: 'буссаид мохаммед салим',
-    teacherName: 'буссаид мохаммед салим',
-    group: 'Вечерния суббота',
-    date: '10.10.2010',
-    algocoins: 5,
-  },
-  {
-    id: 4,
-    studentName: 'буссаид мохаммед салим',
-    teacherName: 'Петров Петр Петрович',
-    group: 'Группа пятница',
-    date: '10.10.2010',
-    algocoins: 5,
-  },
-  {
-    id: 5,
-    studentName: 'буссаид мохаммед салим',
-    teacherName: 'Сидоров Сидор Сидорович',
-    group: 'Группа 1',
-    date: '10.10.2010',
-    algocoins: 5,
-  },
-  {
-    id: 6,
-    studentName: 'буссаид мохаммед салим',
-    teacherName: 'Коссе Иван Николаевич',
-    group: 'Группа утро',
-    date: '09.10.2010',
-    algocoins: 3,
-  },
-  {
-    id: 7,
-    studentName: 'буссаид мохаммед салим',
-    teacherName: 'Коссе Иван Николаевич',
-    group: 'Вечерния четверг',
-    date: '08.10.2010',
-    algocoins: 7,
-  },
-]
-
-const mockGroups = ['Вечерния суббота', 'Группа пятница', 'Группа 1', 'Группа утро', 'Вечерния четверг', 'Группа А', 'Группа Б']
-const mockTeachers = [
-  'буссаид мохаммед салим',
-  'Петров Петр Петрович',
-  'Сидоров Сидор Сидорович',
-  'Иванова Анна Петровна',
-  'Смирнов Алексей Иванович',
-  'Кузнецова Елена Сергеевна',
-]
 
 export default function HistoryPage() {
   const router = useRouter()
-  const [records, setRecords] = useState<HistoryRecord[]>(mockHistory)
-  const [showFilterModal, setShowFilterModal] = useState(false)
+  const [historyRecords, setHistoryRecords] = useState<HistoryRecord[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   
-  // Filter states - all checked by default on page load
-  const [selectedGroups, setSelectedGroups] = useState<string[]>([])
-  const [selectedTeachers, setSelectedTeachers] = useState<string[]>([])
-  const [showAllGroups, setShowAllGroups] = useState(false)
-  const [showAllTeachers, setShowAllTeachers] = useState(false)
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [selectedTeacher, setSelectedTeacher] = useState('')
+  const [selectedGroup, setSelectedGroup] = useState('')
+  const [selectedStudent, setSelectedStudent] = useState('')
+  
+  const [teachers, setTeachers] = useState<string[]>([])
+  const [groups, setGroups] = useState<string[]>([])
+  const [students, setStudents] = useState<string[]>([])
 
-  // Initialize all filters as checked on component mount
   useEffect(() => {
-    setSelectedGroups(mockGroups)
-    setSelectedTeachers(mockTeachers)
+    loadData()
   }, [])
 
-  const toggleGroup = (group: string) => {
-    setSelectedGroups((prev) =>
-      prev.includes(group) ? prev.filter((g) => g !== group) : [...prev, group]
+  const loadData = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      
+      // Load coins history
+      const history = await userApi.getAllCoinsHistory()
+      
+      // Convert to our format
+      const records: HistoryRecord[] = history.map((h, index) => ({
+        id: index + 1,
+        date: new Date(h.date).toLocaleDateString('ru-RU'),
+        teacher: h.admin ? `${h.admin.last_name} ${h.admin.first_name}` : 'Система',
+        group: h.user?.group_name || 'Без группы',
+        student: h.user ? `${h.user.last_name} ${h.user.first_name}` : 'Неизвестно',
+        coins: h.coins,
+        reason: h.reason || 'Не указана'
+      }))
+      
+      setHistoryRecords(records)
+      
+      // Extract unique values for filters
+      const uniqueTeachers = [...new Set(records.map(r => r.teacher))].sort()
+      const uniqueGroups = [...new Set(records.map(r => r.group))].sort()
+      const uniqueStudents = [...new Set(records.map(r => r.student))].sort()
+      
+      setTeachers(uniqueTeachers)
+      setGroups(uniqueGroups)
+      setStudents(uniqueStudents)
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          clearAuthCredentials()
+          router.push('/auth')
+          return
+        }
+        setError(err.message)
+      } else {
+        setError('Ошибка загрузки истории')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Convert dd.mm.yyyy to comparable format
+  const parseRussianDate = (dateStr: string): Date => {
+    const parts = dateStr.split('.')
+    return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]))
+  }
+
+  // Filter and sort records
+  const filteredRecords = historyRecords
+    .filter((record) => {
+      // Date filter
+      if (dateFrom) {
+        const recordDate = parseRussianDate(record.date)
+        const fromDate = new Date(dateFrom)
+        if (recordDate < fromDate) return false
+      }
+      if (dateTo) {
+        const recordDate = parseRussianDate(record.date)
+        const toDate = new Date(dateTo)
+        if (recordDate > toDate) return false
+      }
+      
+      // Other filters
+      if (selectedTeacher && record.teacher !== selectedTeacher) return false
+      if (selectedGroup && record.group !== selectedGroup) return false
+      if (selectedStudent && record.student !== selectedStudent) return false
+      
+      return true
+    })
+    .sort((a, b) => {
+      const dateA = parseRussianDate(a.date)
+      const dateB = parseRussianDate(b.date)
+      return dateB.getTime() - dateA.getTime()
+    })
+
+  const clearFilters = () => {
+    setDateFrom('')
+    setDateTo('')
+    setSelectedTeacher('')
+    setSelectedGroup('')
+    setSelectedStudent('')
+  }
+
+  // Calculate total coins for filtered records
+  const totalCoins = filteredRecords.reduce((sum, r) => sum + r.coins, 0)
+
+  if (loading) {
+    return (
+      <div className="flex h-screen w-full bg-[#f4f9fd] items-center justify-center">
+        <div className="text-gray-500">Загрузка...</div>
+      </div>
     )
   }
-
-  const toggleTeacher = (teacher: string) => {
-    setSelectedTeachers((prev) =>
-      prev.includes(teacher) ? prev.filter((t) => t !== teacher) : [...prev, teacher]
-    )
-  }
-
-  const applyFilter = () => {
-    // Filter is applied but modal stays open
-    // User must click X to close
-  }
-
-  const displayedGroups = showAllGroups ? mockGroups : mockGroups.slice(0, 5)
-  const displayedTeachers = showAllTeachers ? mockTeachers : mockTeachers.slice(0, 5)
-
-  // Filter records based on selected groups and teachers
-  const filteredRecords = records.filter(
-    (record) =>
-      selectedGroups.includes(record.group) && selectedTeachers.includes(record.teacherName)
-  )
 
   return (
     <div className="flex h-screen w-full bg-[#f4f9fd]">
@@ -133,7 +140,7 @@ export default function HistoryPage() {
         <nav className="flex-1 px-4 pt-8 space-y-2">
           <button
             onClick={() => router.push('/profile')}
-            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -144,7 +151,7 @@ export default function HistoryPage() {
 
           <button
             onClick={() => router.push('/users')}
-            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
@@ -156,7 +163,7 @@ export default function HistoryPage() {
 
           <button
             onClick={() => router.push('/groups')}
-            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="3" />
@@ -167,7 +174,7 @@ export default function HistoryPage() {
 
           <button
             onClick={() => router.push('/gifts')}
-            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
@@ -177,7 +184,7 @@ export default function HistoryPage() {
 
           <button
             onClick={() => router.push('/orders')}
-            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M9 2v2m6-2v2M4 6h16M5 10h14v10H5V10z" />
@@ -185,20 +192,22 @@ export default function HistoryPage() {
             <span>Заказы</span>
           </button>
 
-          <button className="w-full flex items-center gap-3 px-4 py-3 text-left bg-[#132440]/10 text-[#132440] border-l-4 border-[#132440] rounded-xl">
+          <button className="w-full flex items-center gap-3 px-4 py-3 text-left bg-[#132440]/10 text-[#132440] font-medium rounded-xl border-l-4 border-[#132440]">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M12 2L2 7l10 5 10-5-10-5z" />
               <path d="M2 17l10 5 10-5M2 12l10 5 10-5" />
             </svg>
-            <span className="font-medium">История</span>
+            <span>История</span>
           </button>
         </nav>
 
-        <div className="px-4 py-6 mt-auto">
-          <div className="h-px bg-gray-200 mb-6"></div>
+        <div className="p-6 mt-auto border-t">
           <button
-            onClick={() => router.push('/auth')}
-            className="w-full flex items-center gap-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-xl transition-colors"
+            onClick={() => {
+              clearAuthCredentials()
+              router.push('/auth')
+            }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
@@ -210,165 +219,154 @@ export default function HistoryPage() {
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto">
-        {/* Header */}
-        <div className="bg-white border-b px-10 py-6 flex justify-between items-center">
-          <h1 className="text-2xl font-bold">История зачислений</h1>
-          <button
-            onClick={() => setShowFilterModal(true)}
-            className="flex items-center gap-2 px-6 py-3 border border-gray-300 rounded-xl hover:bg-gray-50 hover:border-[#132440]/30 transition-all"
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18M7 12h10M11 18h2" />
-            </svg>
-            Фильтр
-          </button>
+        {/* Top Header */}
+        <div className="bg-white border-b px-10 py-6">
+          <h1 className="text-3xl font-bold text-gray-800">История начислений</h1>
         </div>
 
-        <div className="p-10">
-
-          {/* Records List */}
-          <div className="space-y-4">
-            {filteredRecords.map((record) => (
-              <div
-                key={record.id}
-                className="bg-gradient-to-br from-white to-gray-50/50 rounded-2xl p-6 border border-gray-200 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200"
-              >
-                <div className="grid grid-cols-5 gap-6">
-                  <div>
-                    <div className="text-xs text-gray-500 mb-2 font-medium">ФИО ученика</div>
-                    <div className="h-px bg-gradient-to-r from-gray-200 to-transparent mb-3"></div>
-                    <div className="text-sm">{record.studentName}</div>
-                  </div>
-
-                  <div>
-                    <div className="text-xs text-gray-500 mb-2 font-medium">ФИО преподавателя</div>
-                    <div className="h-px bg-gradient-to-r from-gray-200 to-transparent mb-3"></div>
-                    <div className="text-sm">{record.teacherName}</div>
-                  </div>
-
-                  <div>
-                    <div className="text-xs text-gray-500 mb-2 font-medium">Группа</div>
-                    <div className="h-px bg-gradient-to-r from-gray-200 to-transparent mb-3"></div>
-                    <div className="text-sm">{record.group}</div>
-                  </div>
-
-                  <div>
-                    <div className="text-xs text-gray-500 mb-2 font-medium">Дата зачисления</div>
-                    <div className="h-px bg-gradient-to-r from-gray-200 to-transparent mb-3"></div>
-                    <div className="text-sm">{record.date}</div>
-                  </div>
-
-                  <div>
-                    <div className="text-xs text-gray-500 mb-2 font-medium">Кол-во алгокоинов</div>
-                    <div className="h-px bg-gradient-to-r from-gray-200 to-transparent mb-3"></div>
-                    <div className="text-sm font-semibold text-[#132440]">{record.algocoins}</div>
-                  </div>
-                </div>
-              </div>
-            ))}
-
-            {filteredRecords.length === 0 && (
-              <div className="text-center py-12 text-gray-400">Нет записей</div>
-            )}
+        {/* Error message */}
+        {error && (
+          <div className="mx-10 mt-4 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600">
+            {error}
           </div>
+        )}
 
-          {/* Pagination */}
-          <div className="flex justify-end items-center gap-4 mt-6 text-sm text-gray-600">
-            <span>1-5 из 28</span>
-            <div className="flex gap-2">
-              <button className="p-1 hover:bg-gray-100 rounded">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M15 18l-6-6 6-6" />
-                </svg>
-              </button>
-              <button className="p-1 hover:bg-gray-100 rounded">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M9 18l6-6-6-6" />
-                </svg>
+        {/* Content Area */}
+        <div className="p-10">
+          {/* Filters */}
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 mb-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-gray-800">Фильтры</h2>
+              <button
+                onClick={clearFilters}
+                className="text-sm text-indigo-600 hover:text-indigo-700"
+              >
+                Сбросить
               </button>
             </div>
+            
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Дата с</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Дата по</label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Учитель</label>
+                <select
+                  value={selectedTeacher}
+                  onChange={(e) => setSelectedTeacher(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Все</option>
+                  {teachers.map((t) => (
+                    <option key={t} value={t}>{t}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Группа</label>
+                <select
+                  value={selectedGroup}
+                  onChange={(e) => setSelectedGroup(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Все</option>
+                  {groups.map((g) => (
+                    <option key={g} value={g}>{g}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm text-gray-600 mb-1">Ученик</label>
+                <select
+                  value={selectedStudent}
+                  onChange={(e) => setSelectedStudent(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">Все</option>
+                  {students.map((s) => (
+                    <option key={s} value={s}>{s}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Stats Summary */}
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 mb-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-600">Всего записей</p>
+                <p className="text-2xl font-bold text-gray-800">{filteredRecords.length}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-600">Сумма монет</p>
+                <p className={`text-2xl font-bold ${totalCoins >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                  {totalCoins >= 0 ? '+' : ''}{totalCoins}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* History Table */}
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-gray-50 border-b border-gray-200">
+                <tr>
+                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-600">Дата</th>
+                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-600">Учитель</th>
+                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-600">Группа</th>
+                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-600">Ученик</th>
+                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-600">Монеты</th>
+                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-600">Причина</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredRecords.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="text-center py-8 text-gray-400">
+                      Нет записей
+                    </td>
+                  </tr>
+                ) : (
+                  filteredRecords.map((record) => (
+                    <tr key={record.id} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="px-6 py-4 text-sm text-gray-600">{record.date}</td>
+                      <td className="px-6 py-4 text-sm text-gray-800">{record.teacher}</td>
+                      <td className="px-6 py-4 text-sm text-gray-800">{record.group}</td>
+                      <td className="px-6 py-4 text-sm text-gray-800">{record.student}</td>
+                      <td className="px-6 py-4">
+                        <span className={`text-sm font-medium ${record.coins >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                          {record.coins >= 0 ? '+' : ''}{record.coins}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 text-sm text-gray-600">{record.reason}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </main>
-
-      {/* Filter Modal */}
-      {showFilterModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-2xl p-8 w-full max-w-md max-h-[80vh] overflow-y-auto shadow-2xl">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold">Фильтр</h2>
-              <button
-                onClick={() => setShowFilterModal(false)}
-                className="p-2 hover:bg-gray-100 rounded-full transition-colors"
-              >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 6L6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            {/* Groups Filter */}
-            <div className="mb-6">
-              <h3 className="font-semibold mb-4 text-gray-700">Группа</h3>
-              <div className="space-y-3">
-                {displayedGroups.map((group) => (
-                  <label key={group} className="flex items-center gap-3 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={selectedGroups.includes(group)}
-                      onChange={() => toggleGroup(group)}
-                      className="w-4 h-4 rounded border-gray-300 text-[#132440] focus:ring-[#132440]"
-                    />
-                    <span className="text-sm group-hover:text-[#132440] transition-colors">{group}</span>
-                  </label>
-                ))}
-                {mockGroups.length > 5 && (
-                  <button
-                    onClick={() => setShowAllGroups(!showAllGroups)}
-                    className="text-sm text-[#132440] hover:text-[#0d1a2e] font-medium mt-2"
-                  >
-                    {showAllGroups ? 'Показать меньше' : 'Просмотреть больше'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Teachers Filter */}
-            <div className="mb-8">
-              <h3 className="font-semibold mb-4 text-gray-700">Преподаватель</h3>
-              <div className="space-y-3">
-                {displayedTeachers.map((teacher) => (
-                  <label key={teacher} className="flex items-center gap-3 cursor-pointer group">
-                    <input
-                      type="checkbox"
-                      checked={selectedTeachers.includes(teacher)}
-                      onChange={() => toggleTeacher(teacher)}
-                      className="w-4 h-4 rounded border-gray-300 text-[#132440] focus:ring-[#132440]"
-                    />
-                    <span className="text-sm group-hover:text-[#132440] transition-colors">{teacher}</span>
-                  </label>
-                ))}
-                {mockTeachers.length > 5 && (
-                  <button
-                    onClick={() => setShowAllTeachers(!showAllTeachers)}
-                    className="text-sm text-[#132440] hover:text-[#0d1a2e] font-medium mt-2"
-                  >
-                    {showAllTeachers ? 'Показать меньше' : 'Просмотреть больше'}
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Apply Filter Button */}
-            <button
-              onClick={applyFilter}
-              className="w-full bg-[#132440] text-white py-3 rounded-xl font-medium hover:bg-[#0d1a2e] transition-colors shadow-md"
-            >
-              Сохранить фильтр
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

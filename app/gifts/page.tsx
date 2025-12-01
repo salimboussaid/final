@@ -1,85 +1,105 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
+import { presentApi, ApiError, clearAuthCredentials, API_BASE_URL } from '@/lib/api'
+import { MobilePresentResponse } from '@/lib/types'
 
-// Types
+// Local Gift type for UI
 interface Gift {
   id: number
   name: string
   price: number
   stock: number
-  images: string[]
-  category: string
+  photoIds: number[]
 }
-
-// Mock data
-const mockGifts: Gift[] = [
-  {
-    id: 1,
-    name: 'Фирменая худи с логотипом вуза',
-    price: 100,
-    stock: 5,
-    images: ['/gifts/a.jpg', '/gifts/aa.jpg', '/gifts/aaa.jpg', '/gifts/a.jpg'],
-    category: 'Фирменая худи с логотипом вуза',
-  },
-  {
-    id: 2,
-    name: 'Фирменая худи с логотипом вуза',
-    price: 100,
-    stock: 3,
-    images: ['/gifts/a.jpg', '/gifts/aa.jpg', '/gifts/aaa.jpg', '/gifts/a.jpg'],
-    category: 'Фирменая худи с логотипом вуза',
-  },
-  {
-    id: 3,
-    name: 'Фирменая худи с логотипом вуза',
-    price: 100,
-    stock: 8,
-    images: ['/gifts/a.jpg', '/gifts/aa.jpg', '/gifts/aaa.jpg', '/gifts/a.jpg'],
-    category: 'Фирменая худи с логотипом вуза',
-  },
-  {
-    id: 4,
-    name: 'Ручка',
-    price: 25,
-    stock: 15,
-    images: ['/gifts/a.jpg'],
-    category: 'Ручка',
-  },
-  {
-    id: 5,
-    name: 'Футболка',
-    price: 50,
-    stock: 20,
-    images: ['/gifts/aa.jpg'],
-    category: 'Футболка',
-  },
-]
 
 export default function GiftsPage() {
   const router = useRouter()
-  const [gifts, setGifts] = useState<Gift[]>(mockGifts)
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(mockGifts[0]?.category || null)
+  const [gifts, setGifts] = useState<Gift[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [selectedGift, setSelectedGift] = useState<Gift | null>(null)
 
+  // Pagination states
+  const [currentPage, setCurrentPage] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const [showAll, setShowAll] = useState(false)
+  const PAGE_SIZE = 10
+
   // Form states
   const [giftName, setGiftName] = useState('')
   const [giftPrice, setGiftPrice] = useState('')
   const [giftStock, setGiftStock] = useState('')
-  const [giftImages, setGiftImages] = useState<string[]>([])
+  const [giftImages, setGiftImages] = useState<File[]>([])
+  const [giftImagePreviews, setGiftImagePreviews] = useState<string[]>([])
   const [errors, setErrors] = useState<{ [key: string]: string }>({})
 
-  // Get unique categories
-  const categories = Array.from(new Set(gifts.map((g) => g.category)))
+  useEffect(() => {
+    loadGifts()
+  }, [currentPage, showAll])
+
+  const loadGifts = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      
+      let data: MobilePresentResponse[]
+      if (showAll) {
+        data = await presentApi.getAllPresents()
+        setTotalPages(1)
+      } else {
+        data = await presentApi.getPresents(currentPage, PAGE_SIZE)
+        // Estimate total pages based on whether we got a full page
+        if (data.length < PAGE_SIZE) {
+          setTotalPages(currentPage + 1)
+        } else {
+          // Check if there's more by fetching next page count
+          const nextPageData = await presentApi.getPresents(currentPage + 1, 1)
+          setTotalPages(nextPageData.length > 0 ? currentPage + 2 : currentPage + 1)
+        }
+      }
+      
+      const convertedGifts: Gift[] = data.map(p => ({
+        id: p.id,
+        name: p.name,
+        price: p.priceCoins,
+        stock: p.stock,
+        photoIds: p.photoIds || []
+      }))
+      setGifts(convertedGifts)
+      
+      // Set initial category
+      if (convertedGifts.length > 0 && !selectedCategory) {
+        setSelectedCategory(convertedGifts[0].name)
+      }
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          clearAuthCredentials()
+          router.push('/auth')
+          return
+        }
+        setError(err.message)
+      } else {
+        setError('Ошибка загрузки данных')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Get unique categories (gift names)
+  const categories = Array.from(new Set(gifts.map((g) => g.name)))
 
   // Filter gifts by category
   const filteredGifts = selectedCategory
-    ? gifts.filter((g) => g.category === selectedCategory)
+    ? gifts.filter((g) => g.name === selectedCategory)
     : gifts
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -87,7 +107,8 @@ export default function GiftsPage() {
     if (!files) return
 
     const validExtensions = ['image/jpeg', 'image/png', 'image/heic', 'image/heif', 'image/webp']
-    const newImages: string[] = []
+    const newImages: File[] = []
+    const newPreviews: string[] = []
 
     Array.from(files).forEach((file) => {
       if (!validExtensions.includes(file.type)) {
@@ -100,11 +121,13 @@ export default function GiftsPage() {
         return
       }
 
+      newImages.push(file)
       const reader = new FileReader()
       reader.onloadend = () => {
-        newImages.push(reader.result as string)
-        if (newImages.length === Math.min(files.length, 8 - giftImages.length)) {
+        newPreviews.push(reader.result as string)
+        if (newPreviews.length === newImages.length) {
           setGiftImages([...giftImages, ...newImages])
+          setGiftImagePreviews([...giftImagePreviews, ...newPreviews])
         }
       }
       reader.readAsDataURL(file)
@@ -113,6 +136,7 @@ export default function GiftsPage() {
 
   const removeImage = (index: number) => {
     setGiftImages(giftImages.filter((_, i) => i !== index))
+    setGiftImagePreviews(giftImagePreviews.filter((_, i) => i !== index))
   }
 
   const validateForm = () => {
@@ -132,7 +156,7 @@ export default function GiftsPage() {
       newErrors.stock = 'Количество должно быть от 1 до 999'
     }
 
-    if (giftImages.length === 0) {
+    if (giftImages.length === 0 && !selectedGift) {
       newErrors.images = 'Загрузите хотя бы одно изображение'
     }
 
@@ -140,49 +164,65 @@ export default function GiftsPage() {
     return Object.keys(newErrors).length === 0
   }
 
-  const handleCreateGift = () => {
+  const handleCreateGift = async () => {
     if (!validateForm()) return
 
-    const newGift: Gift = {
-      id: gifts.length + 1,
-      name: giftName,
-      price: parseInt(giftPrice),
-      stock: parseInt(giftStock),
-      images: giftImages,
-      category: giftName,
+    try {
+      await presentApi.createPresent(
+        giftName,
+        parseInt(giftPrice),
+        parseInt(giftStock),
+        giftImages
+      )
+      await loadGifts()
+      setShowCreateModal(false)
+      resetForm()
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrors({ api: err.message })
+      }
     }
-
-    setGifts([...gifts, newGift])
-    setShowCreateModal(false)
-    resetForm()
   }
 
-  const handleEditGift = () => {
-    if (!selectedGift || !validateForm()) return
-
-    const updatedGifts = gifts.map((g) =>
-      g.id === selectedGift.id
-        ? {
-            ...g,
-            name: giftName,
-            price: parseInt(giftPrice),
-            stock: parseInt(giftStock),
-            images: giftImages,
-            category: giftName,
-          }
-        : g
-    )
-
-    setGifts(updatedGifts)
-    setShowEditModal(false)
-    resetForm()
-  }
-
-  const handleDeleteGift = () => {
+  const handleEditGift = async () => {
     if (!selectedGift) return
-    setGifts(gifts.filter((g) => g.id !== selectedGift.id))
-    setShowDeleteModal(false)
-    setSelectedGift(null)
+    if (!validateForm()) return
+
+    try {
+      await presentApi.updatePresent(selectedGift.id, {
+        name: giftName,
+        priceCoins: parseInt(giftPrice),
+        stock: parseInt(giftStock)
+      })
+      
+      // Add new photos if any
+      if (giftImages.length > 0) {
+        await presentApi.addPhotos(selectedGift.id, giftImages)
+      }
+      
+      await loadGifts()
+      setShowEditModal(false)
+      resetForm()
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrors({ api: err.message })
+      }
+    }
+  }
+
+  const handleDeleteGift = async () => {
+    if (!selectedGift) return
+
+    try {
+      await presentApi.deletePresent(selectedGift.id)
+      await loadGifts()
+      setShowDeleteModal(false)
+      setSelectedGift(null)
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrors({ api: err.message })
+      }
+    }
   }
 
   const resetForm = () => {
@@ -190,6 +230,7 @@ export default function GiftsPage() {
     setGiftPrice('')
     setGiftStock('')
     setGiftImages([])
+    setGiftImagePreviews([])
     setErrors({})
   }
 
@@ -203,7 +244,8 @@ export default function GiftsPage() {
     setGiftName(gift.name)
     setGiftPrice(gift.price.toString())
     setGiftStock(gift.stock.toString())
-    setGiftImages([...gift.images])
+    setGiftImages([])
+    setGiftImagePreviews([])
     setErrors({})
     setShowEditModal(true)
   }
@@ -211,6 +253,18 @@ export default function GiftsPage() {
   const openDeleteModal = (gift: Gift) => {
     setSelectedGift(gift)
     setShowDeleteModal(true)
+  }
+
+  const getPhotoUrl = (giftId: number, photoId: number) => {
+    return presentApi.getPhotoUrl(giftId, photoId)
+  }
+
+  if (loading) {
+    return (
+      <div className="flex h-screen w-full bg-[#f4f9fd] items-center justify-center">
+        <div className="text-gray-500">Загрузка...</div>
+      </div>
+    )
   }
 
   return (
@@ -283,7 +337,10 @@ export default function GiftsPage() {
 
         <div className="p-6 mt-auto border-t">
           <button
-            onClick={() => router.push('/auth')}
+            onClick={() => {
+              clearAuthCredentials()
+              router.push('/auth')
+            }}
             className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -307,117 +364,166 @@ export default function GiftsPage() {
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M12 5v14M5 12h14" />
               </svg>
-              <span className="font-medium">Создать подарок</span>
+              <span className="font-medium">Добавить подарок</span>
             </button>
           </div>
         </div>
 
+        {/* Error message */}
+        {error && (
+          <div className="mx-10 mt-4 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600">
+            {error}
+          </div>
+        )}
+
         {/* Content Area */}
         <div className="p-10">
-          {/* Categories Filter */}
-          <div className="mb-8">
-            <div className="flex gap-2 flex-wrap">
-              {categories.map((category) => (
+          <div className="flex gap-6">
+            {/* Left Column: Categories */}
+            <div className="w-80 bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+              <h3 className="font-medium text-gray-800 mb-4">Категории</h3>
+              <div className="space-y-2">
+                {categories.length === 0 ? (
+                  <p className="text-gray-400 text-center py-4">Нет подарков</p>
+                ) : (
+                  categories.map((category) => (
+                    <button
+                      key={category}
+                      onClick={() => setSelectedCategory(category)}
+                      className={`w-full text-left px-4 py-3 rounded-xl transition-all ${
+                        selectedCategory === category
+                          ? 'bg-[#132440]/10 text-[#132440] font-medium'
+                          : 'hover:bg-gray-50 text-gray-700'
+                      }`}
+                    >
+                      {category}
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+
+            {/* Right Column: Gifts Grid */}
+            <div className="flex-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {filteredGifts.map((gift) => (
+                  <div
+                    key={gift.id}
+                    className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden"
+                  >
+                    <div className="relative h-48 bg-gray-100">
+                      {gift.photoIds.length > 0 ? (
+                        <img
+                          src={getPhotoUrl(gift.id, gift.photoIds[0])}
+                          alt={gift.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-gray-400">
+                          Нет фото
+                        </div>
+                      )}
+                    </div>
+                    <div className="p-4">
+                      <h3 className="font-medium text-gray-800 mb-2">{gift.name}</h3>
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="text-indigo-600 font-bold">{gift.price} алгокоинов</span>
+                        <span className="text-gray-500 text-sm">В наличии: {gift.stock}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => openEditModal(gift)}
+                          className="flex-1 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors text-sm"
+                        >
+                          Редактировать
+                        </button>
+                        <button
+                          onClick={() => openDeleteModal(gift)}
+                          className="px-3 py-2 border border-red-300 rounded-lg hover:bg-red-50 text-red-600 transition-colors"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {filteredGifts.length === 0 && (
+                <div className="text-center py-12 text-gray-400">
+                  Нет подарков в этой категории
+                </div>
+              )}
+
+              {/* Pagination Controls */}
+              <div className="mt-6 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      setShowAll(false)
+                      setCurrentPage(0)
+                    }}
+                    disabled={currentPage === 0 && !showAll}
+                    className={`px-4 py-2 rounded-lg border transition-colors ${
+                      currentPage === 0 && !showAll
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Первая
+                  </button>
+                  <button
+                    onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
+                    disabled={currentPage === 0 || showAll}
+                    className={`px-4 py-2 rounded-lg border transition-colors ${
+                      currentPage === 0 || showAll
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    ← Назад
+                  </button>
+                  <span className="px-4 py-2 text-gray-600">
+                    {showAll ? 'Все подарки' : `Страница ${currentPage + 1} из ${totalPages}`}
+                  </span>
+                  <button
+                    onClick={() => setCurrentPage(currentPage + 1)}
+                    disabled={currentPage >= totalPages - 1 || showAll}
+                    className={`px-4 py-2 rounded-lg border transition-colors ${
+                      currentPage >= totalPages - 1 || showAll
+                        ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+                        : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+                    }`}
+                  >
+                    Вперед →
+                  </button>
+                </div>
                 <button
-                  key={category}
-                  onClick={() => setSelectedCategory(category)}
-                  className={`px-5 py-2.5 rounded-xl font-medium transition-all ${
-                    selectedCategory === category
-                      ? 'bg-[#132440] text-white shadow-sm'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                  onClick={() => {
+                    setShowAll(!showAll)
+                    setCurrentPage(0)
+                  }}
+                  className={`px-4 py-2 rounded-lg border transition-colors ${
+                    showAll
+                      ? 'bg-[#132440] text-white'
+                      : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
                   }`}
                 >
-                  {category}
+                  {showAll ? 'Постранично' : 'Показать все'}
                 </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Gifts Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {filteredGifts.map((gift) => (
-              <div key={gift.id} className="bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-md transition-shadow relative">
-                <div className="relative">
-                  {/* Main Image */}
-                  <div className="aspect-square bg-gray-100 overflow-hidden">
-                    {gift.images[0] ? (
-                      <Image
-                        src={gift.images[0]}
-                        alt={gift.name}
-                        width={400}
-                        height={400}
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full bg-gray-200 flex items-center justify-center">
-                        <span className="text-gray-400">Нет фото</span>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* Action buttons on image */}
-                  <div className="absolute top-3 right-3 flex gap-2">
-                    <button
-                      onClick={() => openEditModal(gift)}
-                      className="p-2.5 bg-white rounded-lg shadow-md hover:bg-gray-50 border border-gray-200"
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={() => openDeleteModal(gift)}
-                      className="p-2.5 bg-white rounded-lg shadow-md hover:bg-gray-50 text-red-600 border border-gray-200"
-                    >
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                      </svg>
-                    </button>
-                  </div>
-
-                  {/* Thumbnail row */}
-                  {gift.images.length > 1 && (
-                    <div className="absolute bottom-3 left-3 right-3 flex gap-2">
-                      {gift.images.slice(0, 4).map((img, idx) => (
-                        <div key={idx} className="w-14 h-14 bg-white rounded-lg flex-shrink-0 overflow-hidden shadow-md border border-gray-200">
-                          <Image
-                            src={img}
-                            alt={`${gift.name} ${idx + 1}`}
-                            width={56}
-                            height={56}
-                            className="w-full h-full object-cover"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Gift info */}
-                <div className="p-4">
-                  <h3 className="font-semibold mb-3 text-base">{gift.name}</h3>
-                  <div className="space-y-1 text-sm text-gray-600">
-                    <div>
-                      <span className="font-medium">Цена:</span> {gift.price} алгокоинов
-                    </div>
-                    <div>
-                      <span className="font-medium">Кол-во в наличии:</span> {gift.stock}
-                    </div>
-                  </div>
-                </div>
               </div>
-            ))}
+            </div>
           </div>
         </div>
       </main>
 
       {/* Create Gift Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
-          <div className="bg-white rounded-2xl p-6 max-w-lg w-full mx-4 my-8">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-semibold">Создать подарок</h2>
+              <h2 className="text-xl font-semibold">Добавить подарок</h2>
               <button
                 onClick={() => {
                   setShowCreateModal(false)
@@ -431,55 +537,20 @@ export default function GiftsPage() {
               </button>
             </div>
 
+            {errors.api && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                {errors.api}
+              </div>
+            )}
+
             <div className="space-y-4">
               <div>
-                <label className="block text-sm mb-2">Загрузите фото подарка*</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {giftImages.map((img, idx) => (
-                    <div key={idx} className="relative aspect-square bg-gray-100 rounded-lg overflow-hidden">
-                      <Image
-                        src={img}
-                        alt={`Gift ${idx + 1}`}
-                        width={100}
-                        height={100}
-                        className="w-full h-full object-cover"
-                      />
-                      <button
-                        onClick={() => removeImage(idx)}
-                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs hover:bg-red-600"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                  {giftImages.length < 8 && (
-                    <label className="aspect-square border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-50">
-                      <input
-                        type="file"
-                        accept=".jpg,.jpeg,.png,.heic,.heif,.webp"
-                        multiple
-                        onChange={handleImageUpload}
-                        className="hidden"
-                      />
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <path d="M21 15l-5-5L5 21" />
-                      </svg>
-                    </label>
-                  )}
-                </div>
-                {errors.images && <p className="text-red-500 text-xs mt-1">{errors.images}</p>}
-                <p className="text-xs text-gray-500 mt-1">JPEG, PNG, HEIC, HEIF, WebP. Максимум 8 фото.</p>
-              </div>
-
-              <div>
-                <label className="block text-sm mb-2">Название подарка*</label>
+                <label className="block text-sm mb-2">Название*</label>
                 <input
                   type="text"
                   value={giftName}
                   onChange={(e) => setGiftName(e.target.value)}
-                  placeholder="Название"
+                  placeholder="Название подарка"
                   className={`w-full px-4 py-2 rounded-lg border ${
                     errors.name ? 'border-red-500' : 'border-gray-300'
                   } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
@@ -487,40 +558,81 @@ export default function GiftsPage() {
                 {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm mb-2">Цена*</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="9999"
-                    value={giftPrice}
-                    onChange={(e) => setGiftPrice(e.target.value)}
-                    placeholder="Кол-во алгокоинов"
-                    className={`w-full px-4 py-2 rounded-lg border ${
-                      errors.price ? 'border-red-500' : 'border-gray-300'
-                    } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
-                  />
-                  {errors.price && <p className="text-red-500 text-xs mt-1">{errors.price}</p>}
-                  <p className="text-xs text-gray-500 mt-1">От 1 до 9999</p>
-                </div>
+              <div>
+                <label className="block text-sm mb-2">Цена (алгокоины)*</label>
+                <input
+                  type="number"
+                  value={giftPrice}
+                  onChange={(e) => setGiftPrice(e.target.value)}
+                  placeholder="100"
+                  min="1"
+                  max="9999"
+                  className={`w-full px-4 py-2 rounded-lg border ${
+                    errors.price ? 'border-red-500' : 'border-gray-300'
+                  } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+                />
+                {errors.price && <p className="text-red-500 text-xs mt-1">{errors.price}</p>}
+              </div>
 
-                <div>
-                  <label className="block text-sm mb-2">Наличие*</label>
+              <div>
+                <label className="block text-sm mb-2">Количество*</label>
+                <input
+                  type="number"
+                  value={giftStock}
+                  onChange={(e) => setGiftStock(e.target.value)}
+                  placeholder="10"
+                  min="1"
+                  max="999"
+                  className={`w-full px-4 py-2 rounded-lg border ${
+                    errors.stock ? 'border-red-500' : 'border-gray-300'
+                  } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+                />
+                {errors.stock && <p className="text-red-500 text-xs mt-1">{errors.stock}</p>}
+              </div>
+
+              <div>
+                <label className="block text-sm mb-2">Изображения*</label>
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-4">
                   <input
-                    type="number"
-                    min="1"
-                    max="999"
-                    value={giftStock}
-                    onChange={(e) => setGiftStock(e.target.value)}
-                    placeholder="Кол-во в наличии"
-                    className={`w-full px-4 py-2 rounded-lg border ${
-                      errors.stock ? 'border-red-500' : 'border-gray-300'
-                    } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+                    type="file"
+                    accept="image/jpeg,image/png,image/heic,image/heif,image/webp"
+                    multiple
+                    onChange={handleImageUpload}
+                    className="hidden"
+                    id="image-upload"
                   />
-                  {errors.stock && <p className="text-red-500 text-xs mt-1">{errors.stock}</p>}
-                  <p className="text-xs text-gray-500 mt-1">От 1 до 999</p>
+                  <label
+                    htmlFor="image-upload"
+                    className="cursor-pointer flex flex-col items-center"
+                  >
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+                    </svg>
+                    <span className="text-gray-500 mt-2">Нажмите для загрузки</span>
+                    <span className="text-gray-400 text-xs">JPEG, PNG, HEIC, WebP (макс. 8)</span>
+                  </label>
                 </div>
+                {errors.images && <p className="text-red-500 text-xs mt-1">{errors.images}</p>}
+                
+                {giftImagePreviews.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {giftImagePreviews.map((preview, index) => (
+                      <div key={index} className="relative">
+                        <img
+                          src={preview}
+                          alt={`Preview ${index + 1}`}
+                          className="w-16 h-16 object-cover rounded-lg"
+                        />
+                        <button
+                          onClick={() => removeImage(index)}
+                          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <button
@@ -536,8 +648,8 @@ export default function GiftsPage() {
 
       {/* Edit Gift Modal */}
       {showEditModal && selectedGift && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
-          <div className="bg-white rounded-2xl p-6 max-w-lg w-full mx-4 my-8">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-semibold">Редактировать подарок</h2>
               <button
@@ -553,55 +665,20 @@ export default function GiftsPage() {
               </button>
             </div>
 
+            {errors.api && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                {errors.api}
+              </div>
+            )}
+
             <div className="space-y-4">
               <div>
-                <label className="block text-sm mb-2">Загрузите фото подарка*</label>
-                <div className="grid grid-cols-4 gap-2">
-                  {giftImages.map((img, idx) => (
-                    <div key={idx} className="relative aspect-square bg-gray-100 rounded-lg overflow-hidden">
-                      <Image
-                        src={img}
-                        alt={`Gift ${idx + 1}`}
-                        width={100}
-                        height={100}
-                        className="w-full h-full object-cover"
-                      />
-                      <button
-                        onClick={() => removeImage(idx)}
-                        className="absolute top-1 right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs hover:bg-red-600"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-                  {giftImages.length < 8 && (
-                    <label className="aspect-square border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center cursor-pointer hover:border-indigo-500 hover:bg-indigo-50">
-                      <input
-                        type="file"
-                        accept=".jpg,.jpeg,.png,.heic,.heif,.webp"
-                        multiple
-                        onChange={handleImageUpload}
-                        className="hidden"
-                      />
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                        <circle cx="8.5" cy="8.5" r="1.5" />
-                        <path d="M21 15l-5-5L5 21" />
-                      </svg>
-                    </label>
-                  )}
-                </div>
-                {errors.images && <p className="text-red-500 text-xs mt-1">{errors.images}</p>}
-                <p className="text-xs text-gray-500 mt-1">JPEG, PNG, HEIC, HEIF, WebP. Максимум 8 фото.</p>
-              </div>
-
-              <div>
-                <label className="block text-sm mb-2">Название подарка*</label>
+                <label className="block text-sm mb-2">Название*</label>
                 <input
                   type="text"
                   value={giftName}
                   onChange={(e) => setGiftName(e.target.value)}
-                  placeholder="Название"
+                  placeholder="Название подарка"
                   className={`w-full px-4 py-2 rounded-lg border ${
                     errors.name ? 'border-red-500' : 'border-gray-300'
                   } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
@@ -609,40 +686,79 @@ export default function GiftsPage() {
                 {errors.name && <p className="text-red-500 text-xs mt-1">{errors.name}</p>}
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm mb-2">Цена*</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="9999"
-                    value={giftPrice}
-                    onChange={(e) => setGiftPrice(e.target.value)}
-                    placeholder="Кол-во алгокоинов"
-                    className={`w-full px-4 py-2 rounded-lg border ${
-                      errors.price ? 'border-red-500' : 'border-gray-300'
-                    } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
-                  />
-                  {errors.price && <p className="text-red-500 text-xs mt-1">{errors.price}</p>}
-                  <p className="text-xs text-gray-500 mt-1">От 1 до 9999</p>
-                </div>
+              <div>
+                <label className="block text-sm mb-2">Цена (алгокоины)*</label>
+                <input
+                  type="number"
+                  value={giftPrice}
+                  onChange={(e) => setGiftPrice(e.target.value)}
+                  placeholder="100"
+                  min="1"
+                  max="9999"
+                  className={`w-full px-4 py-2 rounded-lg border ${
+                    errors.price ? 'border-red-500' : 'border-gray-300'
+                  } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+                />
+                {errors.price && <p className="text-red-500 text-xs mt-1">{errors.price}</p>}
+              </div>
 
-                <div>
-                  <label className="block text-sm mb-2">Наличие*</label>
+              <div>
+                <label className="block text-sm mb-2">Количество*</label>
+                <input
+                  type="number"
+                  value={giftStock}
+                  onChange={(e) => setGiftStock(e.target.value)}
+                  placeholder="10"
+                  min="1"
+                  max="999"
+                  className={`w-full px-4 py-2 rounded-lg border ${
+                    errors.stock ? 'border-red-500' : 'border-gray-300'
+                  } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+                />
+                {errors.stock && <p className="text-red-500 text-xs mt-1">{errors.stock}</p>}
+              </div>
+
+              <div>
+                <label className="block text-sm mb-2">Добавить изображения</label>
+                <div className="border-2 border-dashed border-gray-300 rounded-lg p-4">
                   <input
-                    type="number"
-                    min="1"
-                    max="999"
-                    value={giftStock}
-                    onChange={(e) => setGiftStock(e.target.value)}
-                    placeholder="Кол-во в наличии"
-                    className={`w-full px-4 py-2 rounded-lg border ${
-                      errors.stock ? 'border-red-500' : 'border-gray-300'
-                    } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
+                    type="file"
+                    accept="image/jpeg,image/png,image/heic,image/heif,image/webp"
+                    multiple
+                    onChange={handleImageUpload}
+                    className="hidden"
+                    id="image-upload-edit"
                   />
-                  {errors.stock && <p className="text-red-500 text-xs mt-1">{errors.stock}</p>}
-                  <p className="text-xs text-gray-500 mt-1">От 1 до 999</p>
+                  <label
+                    htmlFor="image-upload-edit"
+                    className="cursor-pointer flex flex-col items-center"
+                  >
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-gray-400">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+                    </svg>
+                    <span className="text-gray-500 mt-2">Нажмите для загрузки</span>
+                  </label>
                 </div>
+                
+                {giftImagePreviews.length > 0 && (
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {giftImagePreviews.map((preview, index) => (
+                      <div key={index} className="relative">
+                        <img
+                          src={preview}
+                          alt={`Preview ${index + 1}`}
+                          className="w-16 h-16 object-cover rounded-lg"
+                        />
+                        <button
+                          onClick={() => removeImage(index)}
+                          className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <button
@@ -663,10 +779,7 @@ export default function GiftsPage() {
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-xl font-semibold">Удалить подарок</h2>
               <button
-                onClick={() => {
-                  setShowDeleteModal(false)
-                  setSelectedGift(null)
-                }}
+                onClick={() => setShowDeleteModal(false)}
                 className="text-gray-400 hover:text-gray-600"
               >
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -675,8 +788,14 @@ export default function GiftsPage() {
               </button>
             </div>
 
+            {errors.api && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                {errors.api}
+              </div>
+            )}
+
             <p className="text-gray-600 mb-6">
-              Подарок будет удален навсегда. Вы точно хотите его удалить?
+              Подарок &quot;{selectedGift.name}&quot; будет удален навсегда. Вы точно хотите его удалить?
             </p>
 
             <button

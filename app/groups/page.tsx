@@ -1,9 +1,11 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { groupApi, ApiError, clearAuthCredentials } from '@/lib/api'
+import { GroupDTO, UserDTO } from '@/lib/types'
 
-// Types
+// Local types for UI
 interface Teacher {
   id: number
   fullName: string
@@ -22,54 +24,50 @@ interface Group {
   participants: Student[]
 }
 
-// Mock data
-const mockTeachers: Teacher[] = [
-  { id: 1, fullName: 'Иванов Иван Иванович' },
-  { id: 2, fullName: 'Петров Петр Петрович' },
-  { id: 3, fullName: 'Сидоров Сидор Сидорович' },
-]
+// Convert API GroupDTO to local Group type
+function convertGroupDTOToGroup(dto: GroupDTO): Group {
+  return {
+    id: dto.id || 0,
+    name: dto.group_name,
+    teacher: dto.teacher ? {
+      id: dto.teacher.id || 0,
+      fullName: dto.teacher.full_name || `${dto.teacher.last_name} ${dto.teacher.first_name} ${dto.teacher.middle_name || ''}`.trim()
+    } : { id: 0, fullName: 'Не назначен' },
+    participants: (dto.students || []).map(s => ({
+      id: s.id || 0,
+      fullName: s.full_name || `${s.last_name} ${s.first_name} ${s.middle_name || ''}`.trim(),
+      login: s.login
+    }))
+  }
+}
 
-const mockStudents: Student[] = [
-  { id: 1, fullName: 'Коссе Иван Николаевич', login: 'kosseivan' },
-  { id: 2, fullName: 'Иванов Артём Дмитриевич', login: 'ivanov' },
-  { id: 3, fullName: 'Кузнецов Даниил Сергеевич', login: 'kuznetsov' },
-  { id: 4, fullName: 'Ковалёва Полина Антоновна', login: 'kovaleva' },
-  { id: 5, fullName: 'Соколов Михаил Ильич', login: 'sokolov' },
-  { id: 6, fullName: 'буссаид мохаммед салим', login: 'davydov' },
-  { id: 7, fullName: 'Козлов Егор Павлович', login: 'kozlov' },
-  { id: 8, fullName: 'Морозов Кирилл Алексеевич', login: 'morozov' },
-  { id: 9, fullName: 'Волков Александр Денисович', login: 'volkov' },
-  { id: 10, fullName: 'Смирнова Анастасия Максимовна', login: 'smirnova' },
-]
+// Convert UserDTO to Teacher/Student
+function convertUserToTeacher(user: UserDTO): Teacher {
+  return {
+    id: user.id || 0,
+    fullName: user.full_name || `${user.last_name} ${user.first_name} ${user.middle_name || ''}`.trim()
+  }
+}
 
-const initialGroups: Group[] = [
-  {
-    id: 1,
-    name: 'Вечерняя группа',
-    teacher: mockTeachers[0],
-    participants: mockStudents.slice(0, 15),
-  },
-  {
-    id: 2,
-    name: 'Группа 1',
-    teacher: mockTeachers[0],
-    participants: mockStudents.slice(0, 15),
-  },
-  {
-    id: 3,
-    name: 'Группа утро суббота',
-    teacher: mockTeachers[0],
-    participants: mockStudents.slice(0, 6),
-  },
-]
+function convertUserToStudent(user: UserDTO): Student {
+  return {
+    id: user.id || 0,
+    fullName: user.full_name || `${user.last_name} ${user.first_name} ${user.middle_name || ''}`.trim(),
+    login: user.login
+  }
+}
 
 export default function GroupsPage() {
   const router = useRouter()
-  const [groups, setGroups] = useState<Group[]>(initialGroups)
-  const [selectedGroup, setSelectedGroup] = useState<Group | null>(initialGroups[0])
+  const [groups, setGroups] = useState<Group[]>([])
+  const [allTeachers, setAllTeachers] = useState<Teacher[]>([])
+  const [allStudents, setAllStudents] = useState<Student[]>([])
+  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   // Form states for Create/Edit Group
   const [groupName, setGroupName] = useState('')
@@ -78,16 +76,65 @@ export default function GroupsPage() {
   const [selectedParticipants, setSelectedParticipants] = useState<Student[]>([])
   const [errors, setErrors] = useState<{ [key: string]: string }>({})
 
+  useEffect(() => {
+    loadGroups()
+  }, [])
+
+  const loadGroups = async () => {
+    try {
+      setLoading(true)
+      setError(null)
+      const groupsData = await groupApi.getAvailableGroups()
+      const convertedGroups = groupsData.map(convertGroupDTOToGroup)
+      setGroups(convertedGroups)
+      
+      // Extract unique teachers and students from groups
+      const teachersMap = new Map<number, Teacher>()
+      const studentsMap = new Map<number, Student>()
+      
+      groupsData.forEach(g => {
+        if (g.teacher && g.teacher.id) {
+          teachersMap.set(g.teacher.id, convertUserToTeacher(g.teacher))
+        }
+        (g.students || []).forEach(s => {
+          if (s.id) {
+            studentsMap.set(s.id, convertUserToStudent(s))
+          }
+        })
+      })
+      
+      setAllTeachers(Array.from(teachersMap.values()))
+      setAllStudents(Array.from(studentsMap.values()))
+      
+      if (convertedGroups.length > 0) {
+        setSelectedGroup(convertedGroups[0])
+      }
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          clearAuthCredentials()
+          router.push('/auth')
+          return
+        }
+        setError(err.message)
+      } else {
+        setError('Ошибка загрузки данных')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
   // Filter students based on search (minimum 3 characters)
   const filteredStudents = searchQuery.length >= 3
-    ? mockStudents.filter(
+    ? allStudents.filter(
         (s) =>
           s.fullName.toLowerCase().includes(searchQuery.toLowerCase()) &&
           !selectedParticipants.some((p) => p.id === s.id)
       )
     : []
 
-  const handleCreateGroup = () => {
+  const handleCreateGroup = async () => {
     const newErrors: { [key: string]: string } = {}
 
     if (!groupName.trim()) {
@@ -103,24 +150,28 @@ export default function GroupsPage() {
       return
     }
 
-    const teacher = mockTeachers.find((t) => t.id === selectedTeacherId)
-    if (!teacher) return
-
-    const newGroup: Group = {
-      id: groups.length + 1,
-      name: groupName,
-      teacher,
-      participants: selectedParticipants,
+    try {
+      const newGroup = await groupApi.createGroup({
+        group_name: groupName,
+        teacher_id: selectedTeacherId!
+      })
+      
+      // Add students to the group
+      for (const student of selectedParticipants) {
+        await groupApi.addStudentToGroup(newGroup.id!, student.id)
+      }
+      
+      await loadGroups()
+      setShowCreateModal(false)
+      resetForm()
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrors({ api: err.message })
+      }
     }
-
-    setGroups([...groups, newGroup])
-    setShowCreateModal(false)
-    resetForm()
-    // Обновляем страницу после создания
-    window.location.reload()
   }
 
-  const handleEditGroup = () => {
+  const handleEditGroup = async () => {
     if (!selectedGroup) return
 
     const newErrors: { [key: string]: string } = {}
@@ -138,39 +189,54 @@ export default function GroupsPage() {
       return
     }
 
-    const teacher = mockTeachers.find((t) => t.id === selectedTeacherId)
-    if (!teacher) return
+    try {
+      // Update group info
+      await groupApi.updateGroup(selectedGroup.id, {
+        id: selectedGroup.id,
+        group_name: groupName,
+        teacher_id: selectedTeacherId!
+      })
 
-    const updatedGroups = groups.map((g) =>
-      g.id === selectedGroup.id
-        ? {
-            ...g,
-            name: groupName,
-            teacher,
-            participants: selectedParticipants,
-          }
-        : g
-    )
+      // Get current participants
+      const currentParticipantIds = new Set(selectedGroup.participants.map(p => p.id))
+      const newParticipantIds = new Set(selectedParticipants.map(p => p.id))
 
-    setGroups(updatedGroups)
-    const updatedGroup = updatedGroups.find((g) => g.id === selectedGroup.id)
-    if (updatedGroup) {
-      setSelectedGroup(updatedGroup)
+      // Remove students that are no longer in the list
+      for (const participant of selectedGroup.participants) {
+        if (!newParticipantIds.has(participant.id)) {
+          await groupApi.removeStudentFromGroup(selectedGroup.id, participant.id)
+        }
+      }
+
+      // Add new students
+      for (const participant of selectedParticipants) {
+        if (!currentParticipantIds.has(participant.id)) {
+          await groupApi.addStudentToGroup(selectedGroup.id, participant.id)
+        }
+      }
+
+      await loadGroups()
+      setShowEditModal(false)
+      resetForm()
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrors({ api: err.message })
+      }
     }
-    setShowEditModal(false)
-    resetForm()
-    // Обновляем страницу после редактирования
-    window.location.reload()
   }
 
-  const handleDeleteGroup = () => {
+  const handleDeleteGroup = async () => {
     if (!selectedGroup) return
-    const updatedGroups = groups.filter((g) => g.id !== selectedGroup.id)
-    setGroups(updatedGroups)
-    setSelectedGroup(updatedGroups[0] || null)
-    setShowDeleteModal(false)
-    // Обновляем страницу после удаления
-    window.location.reload()
+    
+    try {
+      await groupApi.deleteGroup(selectedGroup.id)
+      await loadGroups()
+      setShowDeleteModal(false)
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrors({ api: err.message })
+      }
+    }
   }
 
   const resetForm = () => {
@@ -226,6 +292,14 @@ export default function GroupsPage() {
         a.fullName.localeCompare(b.fullName, 'ru')
       )
     : []
+
+  if (loading) {
+    return (
+      <div className="flex h-screen w-full bg-[#f4f9fd] items-center justify-center">
+        <div className="text-gray-500">Загрузка...</div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-screen w-full bg-[#f4f9fd]">
@@ -297,7 +371,10 @@ export default function GroupsPage() {
 
         <div className="p-6 mt-auto border-t">
           <button
-            onClick={() => router.push('/auth')}
+            onClick={() => {
+              clearAuthCredentials()
+              router.push('/auth')
+            }}
             className="w-full flex items-center gap-3 px-4 py-3 text-left text-gray-700 hover:bg-gray-50 rounded-xl transition-colors"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -326,25 +403,36 @@ export default function GroupsPage() {
           </div>
         </div>
 
+        {/* Error message */}
+        {error && (
+          <div className="mx-10 mt-4 p-4 bg-red-50 border border-red-200 rounded-xl text-red-600">
+            {error}
+          </div>
+        )}
+
         {/* Content Area */}
         <div className="p-10">
           <div className="flex gap-6">
             {/* Left Column: Groups List */}
             <div className="w-80 bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
               <div className="space-y-3">
-                {sortedGroups.map((group) => (
-                  <button
-                    key={group.id}
-                    onClick={() => setSelectedGroup(group)}
-                    className={`w-full text-left px-4 py-3 rounded-xl transition-all ${
-                      selectedGroup?.id === group.id
-                        ? 'bg-[#132440]/10 text-[#132440] font-medium shadow-sm'
-                        : 'hover:bg-gray-50 text-gray-700'
-                    }`}
-                  >
-                    {group.name}
-                  </button>
-                ))}
+                {sortedGroups.length === 0 ? (
+                  <p className="text-gray-400 text-center py-4">Нет групп</p>
+                ) : (
+                  sortedGroups.map((group) => (
+                    <button
+                      key={group.id}
+                      onClick={() => setSelectedGroup(group)}
+                      className={`w-full text-left px-4 py-3 rounded-xl transition-all ${
+                        selectedGroup?.id === group.id
+                          ? 'bg-[#132440]/10 text-[#132440] font-medium shadow-sm'
+                          : 'hover:bg-gray-50 text-gray-700'
+                      }`}
+                    >
+                      {group.name}
+                    </button>
+                  ))
+                )}
               </div>
             </div>
 
@@ -423,6 +511,12 @@ export default function GroupsPage() {
               </button>
             </div>
 
+            {errors.api && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                {errors.api}
+              </div>
+            )}
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm mb-2">Название*</label>
@@ -448,7 +542,7 @@ export default function GroupsPage() {
                   } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
                 >
                   <option value="">Выбрать</option>
-                  {mockTeachers.map((teacher) => (
+                  {allTeachers.map((teacher) => (
                     <option key={teacher.id} value={teacher.id}>
                       {teacher.fullName}
                     </option>
@@ -555,6 +649,12 @@ export default function GroupsPage() {
               </button>
             </div>
 
+            {errors.api && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                {errors.api}
+              </div>
+            )}
+
             <div className="space-y-4">
               <div>
                 <label className="block text-sm mb-2">Название*</label>
@@ -580,7 +680,7 @@ export default function GroupsPage() {
                   } focus:outline-none focus:ring-2 focus:ring-indigo-500`}
                 >
                   <option value="">Выбрать</option>
-                  {mockTeachers.map((teacher) => (
+                  {allTeachers.map((teacher) => (
                     <option key={teacher.id} value={teacher.id}>
                       {teacher.fullName}
                     </option>
@@ -683,6 +783,12 @@ export default function GroupsPage() {
                 </svg>
               </button>
             </div>
+
+            {errors.api && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                {errors.api}
+              </div>
+            )}
 
             <p className="text-gray-600 mb-6">
               Группа будет удалена навсегда. Вы точно хотите ее удалить?
