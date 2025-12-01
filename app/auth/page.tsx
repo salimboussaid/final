@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { setAuthCredentials } from '@/lib/api'
+import { setAuthCredentials, userApi } from '@/lib/api'
 
 export default function AuthPage() {
   const router = useRouter()
@@ -28,18 +28,12 @@ export default function AuthPage() {
       const login = 'admin'
       setAuthCredentials(login, password)
 
-      // Test the credentials by making a request
-      const response = await fetch('http://localhost:3001/api/users/me', {
-        headers: {
-          'Authorization': `Basic ${btoa(`${login}:${password}`)}`,
-          'Content-Type': 'application/json',
-        },
-      })
-
-      if (response.ok) {
+      // Test the credentials by making a request using the API
+      try {
+        await userApi.getCurrentUser()
         // Credentials are valid, redirect to profile
         router.push('/profile')
-      } else {
+      } catch (apiError) {
         // Invalid credentials
         setError('Неверный пароль')
         localStorage.removeItem('auth_credentials')

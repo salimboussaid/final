@@ -6,10 +6,16 @@ import {
   MobilePresentResponse,
   PresentUpdateRequest,
   ErrorResponse,
+  CoinsHistoryRecord,
+  AddCoinsRequest,
+  OrderDTO,
+  PageableResponse,
+  CreateOrderRequest,
+  UpdateOrderStatusRequest,
 } from './types';
 
-// Use the proxy server running on localhost:3001
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001/api';
+// Direct connection to backend - CORS should now be enabled on the server
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://212.220.105.29:8079/api';
 
 class ApiError extends Error {
   constructor(
@@ -120,6 +126,32 @@ export const userApi = {
     });
     return handleResponse<void>(response);
   },
+
+  // Add coins to a student
+  addCoins: async (userId: number, coins: number, reason?: string): Promise<UserDTO> => {
+    const response = await fetch(`${API_BASE_URL}/users/${userId}/coins`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ coins, reason } as AddCoinsRequest),
+    });
+    return handleResponse<UserDTO>(response);
+  },
+
+  // Get coins history for a specific user
+  getCoinsHistory: async (userId: number): Promise<CoinsHistoryRecord[]> => {
+    const response = await fetch(`${API_BASE_URL}/users/${userId}/coinsHistory`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<CoinsHistoryRecord[]>(response);
+  },
+
+  // Get all coins history (for teachers - coins they awarded)
+  getAllCoinsHistory: async (): Promise<CoinsHistoryRecord[]> => {
+    const response = await fetch(`${API_BASE_URL}/users/allCoinsHistory`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<CoinsHistoryRecord[]>(response);
+  },
 };
 
 // Group API
@@ -189,11 +221,17 @@ export const groupApi = {
 
 // Present API
 export const presentApi = {
-  getPresents: async (page = 0, size = 20): Promise<MobilePresentResponse[]> => {
+  // Presents API returns a plain array, not paginated
+  getPresents: async (page = 0, size = 100): Promise<MobilePresentResponse[]> => {
     const response = await fetch(`${API_BASE_URL}/presents?page=${page}&size=${size}`, {
       headers: getAuthHeaders(),
     });
     return handleResponse<MobilePresentResponse[]>(response);
+  },
+
+  // Alias for consistency - presents API already returns all items
+  getAllPresents: async (): Promise<MobilePresentResponse[]> => {
+    return presentApi.getPresents(0, 1000);
   },
 
   getPresent: async (id: number): Promise<AdminPresentResponse> => {
@@ -277,6 +315,65 @@ export const presentApi = {
 
   getPhotoUrl: (presentId: number, photoId: number): string => {
     return `${API_BASE_URL}/presents/${presentId}/photos/${photoId}`;
+  },
+};
+
+// Order API
+export const orderApi = {
+  getOrders: async (page = 0, size = 100, sortBy = 'orderDate', sortDir = 'desc'): Promise<PageableResponse<OrderDTO>> => {
+    const response = await fetch(`${API_BASE_URL}/orders?page=${page}&size=${size}&sortBy=${sortBy}&sortDir=${sortDir}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<PageableResponse<OrderDTO>>(response);
+  },
+
+  // Helper to get all orders (handles pagination internally)
+  getAllOrders: async (): Promise<OrderDTO[]> => {
+    const allOrders: OrderDTO[] = [];
+    let page = 0;
+    let hasMore = true;
+    
+    while (hasMore) {
+      const response = await orderApi.getOrders(page, 100);
+      allOrders.push(...response.content);
+      hasMore = !response.last;
+      page++;
+    }
+    
+    return allOrders;
+  },
+
+  getOrderById: async (id: number): Promise<OrderDTO> => {
+    const response = await fetch(`${API_BASE_URL}/orders/${id}`, {
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<OrderDTO>(response);
+  },
+
+  createOrder: async (presentId: number): Promise<OrderDTO> => {
+    const response = await fetch(`${API_BASE_URL}/orders`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ presentId } as CreateOrderRequest),
+    });
+    return handleResponse<OrderDTO>(response);
+  },
+
+  updateOrderStatus: async (id: number, status: string): Promise<OrderDTO> => {
+    const response = await fetch(`${API_BASE_URL}/orders/${id}`, {
+      method: 'PUT',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ status } as UpdateOrderStatusRequest),
+    });
+    return handleResponse<OrderDTO>(response);
+  },
+
+  cancelOrder: async (id: number): Promise<OrderDTO> => {
+    const response = await fetch(`${API_BASE_URL}/orders/${id}/cancel`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+    });
+    return handleResponse<OrderDTO>(response);
   },
 };
 
