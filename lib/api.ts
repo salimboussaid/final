@@ -12,6 +12,8 @@ import {
   PageableResponse,
   CreateOrderRequest,
   UpdateOrderStatusRequest,
+  TeacherSummary,
+  StudentSummary,
 } from './types';
 
 // Direct connection to backend - CORS should now be enabled on the server
@@ -67,9 +69,9 @@ async function handleResponse<T>(response: Response): Promise<T> {
     try {
       errorData = await response.json();
     } catch (e) {
-      // Failed to parse error response
+      // Failed to parse error response, ignore
     }
-    
+
     throw new ApiError(
       response.status,
       errorData?.code || 'UNKNOWN_ERROR',
@@ -77,13 +79,20 @@ async function handleResponse<T>(response: Response): Promise<T> {
     );
   }
 
-  // Handle 204 No Content
+  // Handle 204 No Content or empty body
   if (response.status === 204) {
     return null as T;
   }
 
-  return response.json();
+  // Safely parse body
+  const text = await response.text();
+  if (!text) {
+    return null as T;
+  }
+
+  return JSON.parse(text) as T;
 }
+
 
 // User API
 export const userApi = {
@@ -151,6 +160,33 @@ export const userApi = {
       headers: getAuthHeaders(),
     });
     return handleResponse<CoinsHistoryRecord[]>(response);
+  },
+
+  // New listing endpoints
+  getTeachers: async (
+    page = 0,
+    size = 20,
+    sortBy = 'secondName',
+    sortDir = 'asc'
+  ): Promise<PageableResponse<TeacherSummary>> => {
+    const response = await fetch(
+      `${API_BASE_URL}/users/teachers?page=${page}&size=${size}&sortBy=${encodeURIComponent(sortBy)}&sortDir=${encodeURIComponent(sortDir)}`,
+      { headers: getAuthHeaders() }
+    );
+    return handleResponse<PageableResponse<TeacherSummary>>(response);
+  },
+
+  getStudents: async (
+    page = 0,
+    size = 20,
+    sortBy = 'secondName',
+    sortDir = 'asc'
+  ): Promise<PageableResponse<StudentSummary>> => {
+    const response = await fetch(
+      `${API_BASE_URL}/users/students?page=${page}&size=${size}&sortBy=${encodeURIComponent(sortBy)}&sortDir=${encodeURIComponent(sortDir)}`,
+      { headers: getAuthHeaders() }
+    );
+    return handleResponse<PageableResponse<StudentSummary>>(response);
   },
 };
 
@@ -360,10 +396,10 @@ export const orderApi = {
   },
 
   updateOrderStatus: async (id: number, status: string): Promise<OrderDTO> => {
-    const response = await fetch(`${API_BASE_URL}/orders/${id}`, {
+    // Backend expects status as query parameter
+    const response = await fetch(`${API_BASE_URL}/orders/${id}?status=${encodeURIComponent(status)}`, {
       method: 'PUT',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ status } as UpdateOrderStatusRequest),
     });
     return handleResponse<OrderDTO>(response);
   },

@@ -77,7 +77,8 @@ export interface AddCoinsRequest {
 }
 
 // Order Types
-export type OrderStatus = 'PENDING' | 'CONFIRMED' | 'DELIVERED' | 'CANCELLED';
+// Updated to match backend order-controller
+export type OrderStatus = 'ORDERED' | 'CONFIRMED' | 'ISSUED' | 'CANCELLED';
 
 export interface OrderDTO {
   id: number;
@@ -122,4 +123,19 @@ export interface CreateOrderRequest {
 
 export interface UpdateOrderStatusRequest {
   status: OrderStatus;
+}
+
+// Summary types for users listing endpoints
+export interface TeacherSummary {
+  id: number;
+  fullName: string;
+  login: string;
+}
+
+export interface StudentSummary {
+  id: number;
+  fullName: string;
+  login: string;
+  birthDate?: string;
+  coins?: number | string;
 }

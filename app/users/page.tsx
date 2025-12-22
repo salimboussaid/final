@@ -44,15 +44,42 @@ export default function UsersPage() {
 
   useEffect(() => {
     loadUsers()
-  }, [])
+  }, [activeTab])
 
   const loadUsers = async () => {
     try {
-      // Note: The API doesn't have a "get all users" endpoint
-      // You may need to request this endpoint from the backend team
-      // For now, we'll use getCurrentUser as an example
-      const currentUser = await userApi.getCurrentUser()
-      setUsers([currentUser])
+      setLoading(true)
+      if (activeTab === 'STUDENT') {
+        const res = await userApi.getStudents(0, 100, 'secondName', 'asc')
+        const mapped: UserDTO[] = res.content.map(s => ({
+          id: s.id,
+          login: s.login,
+          role: 'STUDENT',
+          first_name: '',
+          last_name: '',
+          middle_name: '',
+          full_name: s.fullName,
+          email: '',
+          date_of_birth: s.birthDate || '',
+          coins: typeof s.coins === 'string' ? parseInt(s.coins, 10) || 0 : (s.coins || 0),
+        }))
+        setUsers(mapped)
+      } else {
+        const res = await userApi.getTeachers(0, 100, 'secondName', 'asc')
+        const mapped: UserDTO[] = res.content.map(t => ({
+          id: t.id,
+          login: t.login,
+          role: 'TEACHER',
+          first_name: '',
+          last_name: '',
+          middle_name: '',
+          full_name: t.fullName,
+          email: '',
+          date_of_birth: '',
+          coins: 0,
+        }))
+        setUsers(mapped)
+      }
     } catch (error) {
       if (error instanceof ApiError) {
         console.error('Failed to load users:', error.message)
@@ -219,20 +246,27 @@ export default function UsersPage() {
     }
   }
 
-  const openEditModal = (user: UserDTO) => {
-    setSelectedUser(user)
-    setEditUserData({
-      login: user.login,
-      first_name: user.first_name,
-      last_name: user.last_name,
-      middle_name: user.middle_name || '',
-      role: user.role,
-      email: user.email,
-      date_of_birth: user.date_of_birth,
-    })
-    setErrors({})
-    setShowEditModal(true)
-    setShowUserMenu(null)
+  const openEditModal = async (user: UserDTO) => {
+    try {
+      const full = await userApi.getUserById(user.id!)
+      setSelectedUser(full)
+      setEditUserData({
+        login: full.login,
+        first_name: full.first_name,
+        last_name: full.last_name,
+        middle_name: full.middle_name || '',
+        role: full.role,
+        email: full.email,
+        date_of_birth: full.date_of_birth,
+      })
+      setErrors({})
+      setShowEditModal(true)
+      setShowUserMenu(null)
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setErrors({ api: error.message })
+      }
+    }
   }
 
   const openDeleteModal = (user: UserDTO) => {
@@ -443,7 +477,7 @@ export default function UsersPage() {
                         <div className="flex flex-col">
                           <div className="text-xs font-medium text-gray-500 mb-1.5">Дата рождения</div>
                           <div className="h-px bg-gradient-to-r from-gray-200 to-transparent mb-2"></div>
-                          <div className="text-sm font-semibold text-gray-700">{user.date_of_birth}</div>
+                          <div className="text-sm font-semibold text-gray-700">{user.date_of_birth || '-'}</div>
                         </div>
                         
                         <div className="flex flex-col">

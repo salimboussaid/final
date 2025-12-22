@@ -19,9 +19,9 @@ interface Order {
 // Map API status to Russian
 function mapStatusToRussian(status: OrderStatus): 'Заказан' | 'Подтвержден' | 'Выдан' | 'Отменен' {
   switch (status) {
-    case 'PENDING': return 'Заказан'
+    case 'ORDERED': return 'Заказан'
     case 'CONFIRMED': return 'Подтвержден'
-    case 'DELIVERED': return 'Выдан'
+    case 'ISSUED': return 'Выдан'
     case 'CANCELLED': return 'Отменен'
     default: return 'Заказан'
   }
@@ -30,11 +30,11 @@ function mapStatusToRussian(status: OrderStatus): 'Заказан' | 'Подтв
 // Map Russian status to API
 function mapStatusToApi(status: string): OrderStatus {
   switch (status) {
-    case 'Заказан': return 'PENDING'
+    case 'Заказан': return 'ORDERED'
     case 'Подтвержден': return 'CONFIRMED'
-    case 'Выдан': return 'DELIVERED'
+    case 'Выдан': return 'ISSUED'
     case 'Отменен': return 'CANCELLED'
-    default: return 'PENDING'
+    default: return 'ORDERED'
   }
 }
 
@@ -149,7 +149,7 @@ export default function OrdersPage() {
 
   const handleIssueOrder = async (orderId: number) => {
     try {
-      await orderApi.updateOrderStatus(orderId, 'DELIVERED')
+      await orderApi.updateOrderStatus(orderId, 'ISSUED')
       await loadData()
     } catch (err) {
       if (err instanceof ApiError) {
