@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { groupApi, ApiError, clearAuthCredentials } from '@/lib/api'
+import { groupApi, userApi, ApiError, clearAuthCredentials } from '@/lib/api'
 import { GroupDTO, UserDTO } from '@/lib/types'
 
 // Local types for UI
@@ -85,34 +85,33 @@ export default function GroupsPage() {
     setLoading(true);
     setError(null);
 
-    const response = await groupApi.getAvailableGroups();
-    const groupsData = response.content; // ✅ use content array
-    console.log("Groups array:", groupsData);
+    const groupsResponse = await groupApi.getAvailableGroups(0, 1000);
+    console.log("Groups response:", groupsResponse);
+    const groupsData = groupsResponse.content;
 
     const convertedGroups = groupsData.map(convertGroupDTOToGroup);
     setGroups(convertedGroups);
 
-    // Extract unique teachers and students
-    const teachersMap = new Map<number, Teacher>();
-    const studentsMap = new Map<number, Student>();
+    // Load all teachers and students from dedicated endpoints
+    const teachersResponse = await userApi.getTeachers(0, 1000);
+    const studentsResponse = await userApi.getStudents(0, 1000);
 
-    groupsData.forEach(g => {
-      if (g.teacher?.id) {
-        teachersMap.set(g.teacher.id, convertUserToTeacher(g.teacher));
-      }
+    const teachers: Teacher[] = teachersResponse.content.map(t => ({
+      id: t.id,
+      fullName: t.fullName
+    }));
 
-      (g.students || []).forEach(s => {
-        if (s.id) {
-          studentsMap.set(s.id, convertUserToStudent(s));
-        }
-      });
-    });
+    const students: Student[] = studentsResponse.content.map(s => ({
+      id: s.id,
+      fullName: s.fullName,
+      login: s.login
+    }));
 
-    setAllTeachers(Array.from(teachersMap.values()));
-    setAllStudents(Array.from(studentsMap.values()));
+    setAllTeachers(teachers);
+    setAllStudents(students);
 
-    console.log("Teachers:", Array.from(teachersMap.values()));
-    console.log("Students:", Array.from(studentsMap.values()));
+    console.log("Teachers:", teachers);
+    console.log("Students:", students);
 
     if (convertedGroups.length > 0) {
       setSelectedGroup(convertedGroups[0]);

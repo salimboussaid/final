@@ -192,11 +192,11 @@ export const userApi = {
 
 // Group API
 export const groupApi = {
-  getAvailableGroups: async (): Promise<GroupDTO[]> => {
-    const response = await fetch(`${API_BASE_URL}/groups`, {
+  getAvailableGroups: async (page = 0, size = 100): Promise<PageableResponse<GroupDTO>> => {
+    const response = await fetch(`${API_BASE_URL}/groups?page=${page}&size=${size}`, {
       headers: getAuthHeaders(),
     });
-    return handleResponse<GroupDTO[]>(response);
+    return handleResponse<PageableResponse<GroupDTO>>(response);
   },
 
   getGroupById: async (id: number): Promise<GroupDTO> => {
@@ -234,7 +234,7 @@ export const groupApi = {
 
   addStudentToGroup: async (groupId: number, studentId: number): Promise<GroupDTO> => {
     const response = await fetch(
-      `${API_BASE_URL}/groups/${groupId}/students/${studentId}`,
+      `${API_BASE_URL}/groups/${groupId}/students/${studentId}?studentId=${studentId}`,
       { 
         method: 'POST',
         headers: getAuthHeaders(),
@@ -245,7 +245,7 @@ export const groupApi = {
 
   removeStudentFromGroup: async (groupId: number, studentId: number): Promise<GroupDTO> => {
     const response = await fetch(
-      `${API_BASE_URL}/groups/${groupId}/students/${studentId}`,
+      `${API_BASE_URL}/groups/${groupId}/students/${studentId}?studentId=${studentId}`,
       { 
         method: 'DELETE',
         headers: getAuthHeaders(),
@@ -257,17 +257,28 @@ export const groupApi = {
 
 // Present API
 export const presentApi = {
-  // Presents API returns a plain array, not paginated
-  getPresents: async (page = 0, size = 100): Promise<MobilePresentResponse[]> => {
+  // Presents API returns paginated response
+  getPresents: async (page = 0, size = 100): Promise<PageableResponse<MobilePresentResponse>> => {
     const response = await fetch(`${API_BASE_URL}/presents?page=${page}&size=${size}`, {
       headers: getAuthHeaders(),
     });
-    return handleResponse<MobilePresentResponse[]>(response);
+    return handleResponse<PageableResponse<MobilePresentResponse>>(response);
   },
 
-  // Alias for consistency - presents API already returns all items
+  // Get all presents by fetching all pages
   getAllPresents: async (): Promise<MobilePresentResponse[]> => {
-    return presentApi.getPresents(0, 1000);
+    const allPresents: MobilePresentResponse[] = [];
+    let page = 0;
+    let hasMore = true;
+    
+    while (hasMore) {
+      const response = await presentApi.getPresents(page, 100);
+      allPresents.push(...response.content);
+      hasMore = !response.last;
+      page++;
+    }
+    
+    return allPresents;
   },
 
   getPresent: async (id: number): Promise<AdminPresentResponse> => {
@@ -375,7 +386,7 @@ export const orderApi = {
       hasMore = !response.last;
       page++;
     }
-    
+    console.log('Loaded all orders:', allOrders);
     return allOrders;
   },
 

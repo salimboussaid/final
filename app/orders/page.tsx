@@ -66,6 +66,7 @@ export default function OrdersPage() {
       
       // Load presents first to get names
       const presents = await presentApi.getAllPresents()
+      console.log('Loaded presents:', presents);
       const presentNames = new Map<number, string>()
       presents.forEach(p => presentNames.set(p.id, p.name))
       setPresentsMap(presentNames)
@@ -74,10 +75,12 @@ export default function OrdersPage() {
       let ordersData: OrderDTO[]
       if (showAll) {
         ordersData = await orderApi.getAllOrders()
+        console.log('Loaded all orders:', ordersData);
         setTotalPages(1)
         setTotalElements(ordersData.length)
       } else {
         const response = await orderApi.getOrders(currentPage, PAGE_SIZE)
+        console.log('Loaded paginated orders:', response);
         ordersData = response.content
         setTotalPages(response.totalPages)
         setTotalElements(response.totalElements)
@@ -352,7 +355,9 @@ export default function OrdersPage() {
                   <th className="text-left px-6 py-4 text-sm font-medium text-gray-600">Заказчик</th>
                   <th className="text-left px-6 py-4 text-sm font-medium text-gray-600">Дата</th>
                   <th className="text-left px-6 py-4 text-sm font-medium text-gray-600">Статус</th>
-                  <th className="text-left px-6 py-4 text-sm font-medium text-gray-600">Действия</th>
+                  {activeTab === 'active' && (
+      <th className="text-left px-6 py-4 text-sm font-medium text-gray-600">Действия</th>
+    )}
                 </tr>
               </thead>
               <tbody>

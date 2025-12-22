@@ -54,15 +54,9 @@ export default function GiftsPage() {
         data = await presentApi.getAllPresents()
         setTotalPages(1)
       } else {
-        data = await presentApi.getPresents(currentPage, PAGE_SIZE)
-        // Estimate total pages based on whether we got a full page
-        if (data.length < PAGE_SIZE) {
-          setTotalPages(currentPage + 1)
-        } else {
-          // Check if there's more by fetching next page count
-          const nextPageData = await presentApi.getPresents(currentPage + 1, 1)
-          setTotalPages(nextPageData.length > 0 ? currentPage + 2 : currentPage + 1)
-        }
+        const response = await presentApi.getPresents(currentPage, PAGE_SIZE)
+        data = response.content
+        setTotalPages(response.totalPages)
       }
       
       const convertedGifts: Gift[] = data.map(p => ({
