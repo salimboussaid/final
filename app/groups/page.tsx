@@ -80,50 +80,58 @@ export default function GroupsPage() {
     loadGroups()
   }, [])
 
-  const loadGroups = async () => {
-    try {
-      setLoading(true)
-      setError(null)
-      const groupsData = await groupApi.getAvailableGroups()
-      const convertedGroups = groupsData.map(convertGroupDTOToGroup)
-      setGroups(convertedGroups)
-      
-      // Extract unique teachers and students from groups
-      const teachersMap = new Map<number, Teacher>()
-      const studentsMap = new Map<number, Student>()
-      
-      groupsData.forEach(g => {
-        if (g.teacher && g.teacher.id) {
-          teachersMap.set(g.teacher.id, convertUserToTeacher(g.teacher))
-        }
-        (g.students || []).forEach(s => {
-          if (s.id) {
-            studentsMap.set(s.id, convertUserToStudent(s))
-          }
-        })
-      })
-      
-      setAllTeachers(Array.from(teachersMap.values()))
-      setAllStudents(Array.from(studentsMap.values()))
-      
-      if (convertedGroups.length > 0) {
-        setSelectedGroup(convertedGroups[0])
+ const loadGroups = async () => {
+  try {
+    setLoading(true);
+    setError(null);
+
+    const response = await groupApi.getAvailableGroups();
+    const groupsData = response.content; // ✅ use content array
+    console.log("Groups array:", groupsData);
+
+    const convertedGroups = groupsData.map(convertGroupDTOToGroup);
+    setGroups(convertedGroups);
+
+    // Extract unique teachers and students
+    const teachersMap = new Map<number, Teacher>();
+    const studentsMap = new Map<number, Student>();
+
+    groupsData.forEach(g => {
+      if (g.teacher?.id) {
+        teachersMap.set(g.teacher.id, convertUserToTeacher(g.teacher));
       }
-    } catch (err) {
-      if (err instanceof ApiError) {
-        if (err.status === 401) {
-          clearAuthCredentials()
-          router.push('/auth')
-          return
+
+      (g.students || []).forEach(s => {
+        if (s.id) {
+          studentsMap.set(s.id, convertUserToStudent(s));
         }
-        setError(err.message)
-      } else {
-        setError('Ошибка загрузки данных')
-      }
-    } finally {
-      setLoading(false)
+      });
+    });
+
+    setAllTeachers(Array.from(teachersMap.values()));
+    setAllStudents(Array.from(studentsMap.values()));
+
+    console.log("Teachers:", Array.from(teachersMap.values()));
+    console.log("Students:", Array.from(studentsMap.values()));
+
+    if (convertedGroups.length > 0) {
+      setSelectedGroup(convertedGroups[0]);
     }
+  } catch (err) {
+    if (err instanceof ApiError) {
+      if (err.status === 401) {
+        clearAuthCredentials();
+        router.push('/auth');
+        return;
+      }
+      setError(err.message);
+    } else {
+      setError('Ошибка загрузки данных');
+    }
+  } finally {
+    setLoading(false);
   }
+};
 
   // Filter students based on search (minimum 3 characters)
   const filteredStudents = searchQuery.length >= 3
